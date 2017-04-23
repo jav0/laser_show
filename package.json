@@ -3,8 +3,15 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js",
+    "start":       "budo src/main.js:bundle.js --live -- -d -e src/main.js -t [babelify --comments false --presets es2015]",
+    "prebuild":    "mkdirp build",
+    "build":       "npm run build:js && npm run build:css && npm run build:html && npm run copy:all",
+    "build:js":    "browserify -d -e src/states/main.js -t [babelify --comments false --presets es2015] | uglifyjs -cm > build/bundle.min.js",
+    "build:css":   "cleancss src/main.css -o build/main.min.css",
+    "build:html":  "htmlprocessor src/index.html -o build/index.html",
+    "copy:all":    "npm run copy:assets && npm run copy:phaser",
+    "copy:assets": "ncp assets build/assets/",
+    "copy:phaser": "ncp src/lib/phaser.min.js build/phaser.min.js"
   },
   "keywords": [],
   "author": "Dusan Javorek",

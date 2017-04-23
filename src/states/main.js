@@ -4,7 +4,10 @@
 //import Lobby from './states/lobby';
 //import Game from 'game';
 
-const game = new Phaser.Game(window.innerWidth, window.innerHeight, Phaser.AUTO, 'Game');
+var worldH = 900;
+var worldW = 1800;
+
+const game = new Phaser.Game(window.innerWidth * window.devicePixelRatio, window.innerHeight * window.devicePixelRatio, Phaser.CANVAS, 'Game');
 
 
 game.state.add('boot', Boot);

@@ -5,7 +5,7 @@
 */
 
 
-
+var queued = false;
 var Lobby = {
   preload: function(){
     game.load.spritesheet('button', 'images/Button-sprite.png', 314, 110);
@@ -39,9 +39,12 @@ var Lobby = {
 }
 
 function Play(){
-   socket.emit('to_queue');
+   if (!queued) {
+     socket.emit('to_queue');     
+     texts[0].setText("Searching for a player...");
+     queued = true;
+   }
    socket.emit('online_players');
-   texts[0].setText("Searching for a player...");
 
 }
 function Logout() {
@@ -61,6 +64,7 @@ socket.on('info_player',function(player) {
 
 socket.on('GameStart', function(players, index){
    Players = players;
+   queued = false;
    game.state.start('game');
 });
 

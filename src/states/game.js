@@ -2,9 +2,7 @@
 var walls = [];
 const worldX  = 64;
 const worldY = 64;
-const worldH = 900;
-const worldW = 2100;
-const sectorW = 700;
+const sectorW = 600;
 
 // Player
 var Player, Energy, Lives, cLives, cEnergy;
@@ -24,6 +22,7 @@ var enX, enY;
 var nextFire = 0;
 var fireRate = 700;
 var speed = 700;
+var adSpeed = 700;
 var strafe;
 var keyboard;
 var sBullet;
@@ -51,6 +50,8 @@ var Game = {
   create: function(){
     //  Resize game world
     game.world.setBounds(worldX, worldY, worldW, worldH);
+    //canvasNode.width = window.innerWidth;
+    //canvasNode.height = window.innerHeight;
 
     socket.emit('get_player');
     /*    --Setting textures--*/
@@ -62,8 +63,8 @@ var Game = {
     walls[0] = game.add.tileSprite(worldX + 300, game.world.centerY - 200, wall_size, 400, 'wall');
     walls[1] = game.add.tileSprite(worldW - 300, game.world.centerY - 200, wall_size, 400, 'wall');
     walls[2] = game.add.tileSprite(worldX - wall_size, worldY - wall_size, worldW, wall_size, 'wall'); //up
-    walls[3] = game.add.tileSprite(worldX - wall_size, worldY, wall_size, worldH-wall_size, 'wall'); //left
-    walls[4] = game.add.tileSprite(worldW + wall_size, worldY + wall_size, wall_size, worldH, 'wall'); //right
+    walls[3] = game.add.tileSprite(worldX - wall_size, worldY, wall_size, worldH - wall_size, 'wall'); //left
+    walls[4] = game.add.tileSprite(worldW + wall_size, worldY, wall_size, worldH + wall_size, 'wall'); //right
     walls[5] = game.add.tileSprite(worldX, worldH + wall_size, worldW, wall_size, 'wall'); //bottom
 
     // Players
@@ -104,12 +105,14 @@ var Game = {
 
     var Ename = game.add.text (169 + Eframe_offsetX, 130 + Eframe_offsetY, Enemyname, { font: "15px Courier", fill: "#000 ", align: "center" });
     Ename.fixedToCamera = true;
+    texts[0] = game.add.text(game.world.centerX, game.world.height - 100, "", { font: "40px Courier", fill: "#c00", align: "center" });
+    texts[0].anchor.set(0.5);
 
     // Bullets
     enemyBullets = game.add.group();
     enemyBullets.enableBody = true;
     enemyBullets.physicsBodyType = Phaser.Physics.ARCADE;
-    enemyBullets.createMultiple(30, 'enemy_bullet', 0, false);
+    enemyBullets.createMultiple(1000, 'enemy_bullet', 0, false);
     enemyBullets.setAll('anchor.x', 0.5);
     enemyBullets.setAll('anchor.y', 0.5);
     enemyBullets.setAll('outOfBoundsKill', true);
@@ -118,7 +121,7 @@ var Game = {
     bullets = game.add.group();
     bullets.enableBody = true;
     bullets.physicsBodyType = Phaser.Physics.ARCADE;
-    bullets.createMultiple(30, 'bullet', 0, false);
+    bullets.createMultiple(1000, 'bullet', 0, false);
     bullets.setAll('anchor.x', 0.5);
     bullets.setAll('anchor.y', 0.5);
     bullets.setAll('outOfBoundsKill', true);
@@ -136,7 +139,17 @@ var Game = {
     }
     // Camera
     game.camera.follow(Player);
-    game.camera.focusOnXY(worldX, worldY);
+    game.camera.focusOnXY(Player.x, Player.y);
+    console.log(game.scale.width + " | " + game.scale.height);
+    //game.scale.setGameSize(window.innerWidth, window.innerHeight);
+    //game.scale.setGameSize(worldW, worldH);
+    //game.camera.setSize(1000, 900);
+    //game.scale.scaleMode = Phaser.ScaleManager.SHOW_ALL;
+    //game.scale.minWidth = 640;
+    //game.scale.minHeigth = 360;
+    //game.scale.maxWidth = 1920;
+    //game.scale.maxHeight = 1080;
+    console.log(game.scale.width + " | " + game.scale.height);
     // Keyboard input
     keyboard = game.input.keyboard.addKeys( { 'up': Phaser.KeyCode.W, 'down': Phaser.KeyCode.S, 'left': Phaser.KeyCode.A, 'right': Phaser.KeyCode.D } );;
   },
@@ -147,16 +160,12 @@ var Game = {
     game.physics.arcade.overlap(enemyBullets, walls, bulletHitWall, null, this);
     game.physics.arcade.overlap(enemyBullets, Player, bulletHitPlayer, null, this);
     if (Enemy != undefined) game.physics.arcade.overlap(bullets, Enemy, bulletHitEnemy, null, this);
-
-    if(game.width != window.innerWidth || game.height != window.innerHeight){
-      game.width = window.innerWidth;
-      game.height = window.innerHeight;
-      game.scale.setGameSize(game.width, game.height);
-      land.width = game.width;
-      land.height = game.height;
-    }
     // Controls
-    strafe = 0;
+    /* 1. Option for controls
+      in this one player will follow the mouse and move forward by
+      pressing 'w' or backward by 's', also player can strafe by pressing 'a' or 'd'
+      */
+    /*strafe = 0;
     if (keyboard.left.isDown){
       strafe = -90;
       currentSpeed = speed;
@@ -190,18 +199,48 @@ var Game = {
       strafe = 0;
       currentSpeed = 0;
     }
-
-    strafe = Phaser.Math.degToRad(strafe);
-
     var old_rot = Player.rotation;
 
     Player.rotation = game.physics.arcade.angleToPointer(Player);
+    strafe = Phaser.Math.degToRad(strafe);
     game.physics.arcade.velocityFromRotation(Player.rotation + strafe, currentSpeed, Player.body.velocity);
+    // End of 1. Option for controls
+  */
+  /* 2. Option for controls
+    Player can move by 'w' - up,'a' - down,'s' - left,'d' - right
+    and also with all these keys combined.
+    */
+    adSpeed = 0;
+    currentSpeed = speed;
+    var point = {
+      x: Player.x,
+      y: Player.y
+    }
+    if (keyboard.left.isDown){
+      //strafe = -90;
+      point.x -= 10;
+    }
+    if (keyboard.right.isDown){
+      point.x += 10;
+    }
+    if (keyboard.up.isDown){
+      point.y -= 10;
+    }
+    if(keyboard.down.isDown){
+      point.y += 10;
+    }
+    if (point.x == Player.x && point.y == Player.y) {
+      currentSpeed = 0;
+    }
+    game.physics.arcade.moveToXY(Player, point.x, point.y, currentSpeed, 0);
+    var old_rot = Player.rotation;
 
+    Player.rotation = game.physics.arcade.angleToPointer(Player);
+    // End of 2. Option for controls
     if (old_rot != Player.rotation) {
       socket.emit('sPlayerAngle', Player.rotation);
     }
-    if (currentSpeed != 0){
+    if (currentSpeed != 0 || adSpeed != 0){
       socket.emit('sPlayerPosition', Player.x, Player.y);
     }
 
@@ -242,7 +281,7 @@ function fire () {
 
   if (game.time.now > nextFire && bullets.countDead() > 0 && cEnergy >= 25){
 
-    cEnergy -= 25;
+    //cEnergy -= 25;
 
     nextFire = game.time.now + fireRate;
 
@@ -261,6 +300,20 @@ function fire () {
     };
     socket.emit('sFire', sBullet);
   }
+}
+function endText(win) {
+  var wait = 2;
+  if (win == 1) texts[0].setText("You won");
+  if (!win) texts[0].setText("You lost");
+  if (win == 2) texts[0].setText("Draw");
+  var waiting = setInterval(function() {
+    if (wait == 0) {
+      game.world.setBounds(0, 0, window.innerWidth, window.innerHeight);
+      delete Players;
+      game.state.start('lobby');
+    }
+    wait--;
+  }, 1000);
 }
 socket.on('cFire', function(_bullet) {
 
@@ -282,17 +335,16 @@ socket.on ('cHitPlayer', function() {
   }
 });
 socket.on ('Timeout', function() {
-  if (cELives > Lives)
+  if (cELives > Lives) {
     socket.emit('GameOver', 0);
-  else if (cELives < Lives)
+  } else if (cELives < Lives) {
     socket.emit('GameOver', 1);
-  else
+  } else {
     socket.emit('GameOver', 2);
+  }
 });
-socket.on('GameEnd',function() {
-  game.world.setBounds(0, 0, window.innerWidth, window.innerHeight);
-  delete Players;
-  game.state.start('lobby');
+socket.on('GameEnd',function(win) {
+  endText(win);
 });
 
 socket.on('GameStart',function(players, enemy) {
@@ -307,7 +359,7 @@ socket.on('GameStart',function(players, enemy) {
     myY = _enY;
     enX = _myX;
     enY = _myY;
-    frame_offsetX = worldW - 550;
+    frame_offsetX = window.innerWidth - 550;
     Eframe_offsetX = 0;
   } else {
     myX = _myX;
@@ -315,9 +367,10 @@ socket.on('GameStart',function(players, enemy) {
     enX = _enX;
     enY = _enY;
     frame_offsetX = 0;
-    Eframe_offsetX = worldW - 550;
+    Eframe_offsetX = window.innerWidth - 550;
   }
-  cLives = cELives = 3;
+  cLives = 3;
+  cELives = 3;
   cEnergy = MaxEnergy;
 });
 

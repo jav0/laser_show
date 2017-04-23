@@ -72,6 +72,8 @@ sc.on ('connection', function(socket) {
       //We have found a player, dequeue him
       player2 = Queue[MMRi];
       if (player2 != undefined) {
+        // Cant create room for offline users
+        if (OnlineUsers[player2.SocketID] == undefined) return;
         Players.push(player2);
         userNames[userN_index] = player2.Name;
         OnlineUsers[player2.SocketID].InGame = GameName;
@@ -81,6 +83,7 @@ sc.on ('connection', function(socket) {
     }
     player1 = Queue.shift();
     if (player1 != undefined) {
+      if (OnlineUsers[player1.SocketID] == undefined) return;
       //Dequeue first player in the queue
       Players.push(player1);
       userNames[userN_index] = player1.Name;
@@ -187,14 +190,14 @@ sc.on ('connection', function(socket) {
   }
   /* DISCONNECTING */
   socket.on ('try_disconnect', function () {
-    if (OnlineUsers[socket.id] != null) {
+    if (OnlineUsers[socket.id] != undefined) {
       //User can safely disconnect
       sc.to(socket.id).emit('disconnect_allowed');
       disconnect_user(socket.id);
     }
   });
   socket.on('disconnect', function () {
-    if (OnlineUsers[socket.id] != null) {
+    if (OnlineUsers[socket.id] != undefined) {
       sc.to(socket.id).emit('disconnect_allowed');
       disconnect_user(socket.id);
     }
@@ -322,49 +325,66 @@ sc.on ('connection', function(socket) {
 
     if (Game == undefined) return;
 
-    var mmr1 = 0, mmr2 = 0, id1 = 0, id2 = 0, factor = 0.3, minReward = 5;
+    var mmr1 = -1, mmr2 = -1, id1 = -1, id2 = -1, factor = 0.3, minReward = 5;
 
     //Announce to players that game ended
     for (var i = 0; i < Game._Players.length; i++){
-      OnlineUsers[Game._Players[i].SocketID].InGame = -1;
-      sc.to(Game._Players[i].SocketID).emit('GameEnd');
+      if (OnlineUsers[Game._Players[i].SocketID] != undefined)
+        OnlineUsers[Game._Players[i].SocketID].InGame = -1;
+
       if(Game._Players[i].SocketID == socket.id){
         id1 = i;
+        sc.to(Game._Players[i].SocketID).emit('GameEnd', win);
       } else if(Game._Players[i].SocketID != socket.id){
         id2 = i;
+        if (!win) sc.to(Game._Players[i].SocketID).emit('GameEnd', 1);
+        if (win == 1) sc.to(Game._Players[i].SocketID).emit('GameEnd', 0);
+        else sc.to(Game._Players[i].SocketID).emit('GameEnd', win);
       }
     }
-    //Calculate new mmrs
-    mmr1 = OnlineUsers[Game._Players[id1].SocketID].mmr;
-    mmr2 = OnlineUsers[Game._Players[id2].SocketID].mmr;
+    var calculate = 1;
+    //Calculate new mmrs, if one of players disconnects dont calculate anything
+    if (OnlineUsers[Game._Players[id1].SocketID] != undefined && id1 != -1)
+      mmr1 = OnlineUsers[Game._Players[id1].SocketID].mmr;
+    else
+      calculate = 0;
+    if (OnlineUsers[Game._Players[id2].SocketID] != undefined && id2 != -1)
+      mmr2 = OnlineUsers[Game._Players[id2].SocketID].mmr;
+    else
+      calculate = 0;
+    if (calculate) {
+      var new_mmr = Math.abs(mmr1 - mmr2) * factor;
+      if (new_mmr < minReward) new_mmr = minReward;
+      if (win == 1) {
+        if (mmr1 > mmr2) {
+          mmr1 += 1;
+          mmr2 -= minReward;
+        } else if (mmr1 < mmr2) {
+          mmr1 += new_mmr;
+          mmr2 -= new_mmr;
+        } else {
+          mmr1 += minReward;
+          mmr2 -= minReward;
+        }
+      }
+      if (win == 0) {
+        if (mmr1 < mmr2) {
+          mmr1 -= minReward;
+          mmr2 += 1;
+        } else if (mmr1 > mmr2) {
+          mmr1 -= new_mmr;
+          mmr2 += new_mmr;
+        } else {
+          mmr1 -= minReward;
+          mmr2 += minReward;
+        }
+      }
+
+      OnlineUsers[Game._Players[id1].SocketID].mmr = mmr1;
+      OnlineUsers[Game._Players[id2].SocketID].mmr = mmr2;
+    }
     id1 = Game._Players[id1].ID;
     id2 = Game._Players[id2].ID;
-    var new_mmr = Math.abs(mmr1 - mmr2) * factor;
-    if (new_mmr < minReward) new_mmr = minReward;
-    if (win == 1) {
-      if (mmr1 > mmr2) {
-        mmr1 += 1;
-        mmr2 -= minReward;
-      } else if (mmr1 < mmr2) {
-        mmr1 += new_mmr;
-        mmr2 -= new_mmr;
-      } else {
-        mmr1 += minReward;
-        mmr2 -= minReward;
-      }
-    }
-    if (win == 0) {
-      if (mmr1 < mmr2) {
-        mmr1 -= minReward;
-        mmr2 += 1;
-      } else if (mmr1 > mmr2) {
-        mmr1 -= new_mmr;
-        mmr2 += new_mmr;
-      } else {
-        mmr1 -= minReward;
-        mmr2 += minReward;
-      }
-    }
     //Write to database
     var sql = "SELECT * FROM players WHERE ?? = ?";
     var inserts = ['ID', id1];
@@ -380,8 +400,13 @@ sc.on ('connection', function(socket) {
         };
         if (win == 1) Player.won += 1;
         else if (win == 0) Player.lost += 1;
-        sql = "UPDATE players SET `games` = ?, `won` = ?, `lost` = ?, `mmr` = ? WHERE `ID` = ?";
-        inserts = [(Player.games + 1), Player.won, Player.lost, mmr1, id1];
+        if (calculate) {
+          sql = "UPDATE players SET `games` = ?, `won` = ?, `lost` = ?, `mmr` = ? WHERE `ID` = ?";
+          inserts = [(Player.games + 1), Player.won, Player.lost, mmr1, id1];
+        } else {
+          sql = "UPDATE players SET `games` = ?, `won` = ?, `lost` = ? WHERE `ID` = ?";
+          inserts = [(Player.games + 1), Player.won, Player.lost, id1];
+        }
         sql = mysql.format(sql, inserts);
         pool.query(sql,function(error, row, fields){
           if(!!error)
@@ -404,8 +429,13 @@ sc.on ('connection', function(socket) {
         };
         if (win == 1) Player.lost += 1;
         else if (win == 0) Player.won += 1;
-        sql = "UPDATE players SET `games` = ? , `won` = ? , `lost` = ? , `mmr` = ? WHERE `ID` = ?";
-        inserts = [(Player.games + 1), Player.won, Player.lost, mmr2, id2];
+        if (calculate) {
+          sql = "UPDATE players SET `games` = ?, `won` = ?, `lost` = ?, `mmr` = ? WHERE `ID` = ?";
+          inserts = [(Player.games + 1), Player.won, Player.lost, mmr2, id2];
+        } else {
+          sql = "UPDATE players SET `games` = ?, `won` = ?, `lost` = ? WHERE `ID` = ?";
+          inserts = [(Player.games + 1), Player.won, Player.lost, id2];
+        }
         sql = mysql.format(sql, inserts);
         pool.query(sql,function(error, row, fields){
         if(!!error)
