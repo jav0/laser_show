@@ -1,4 +1,4 @@
 # laser_show
 Author: Dusan Javorek
 
-Version: 1.0.0
+Version: 2.0.0
