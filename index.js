@@ -1,3 +1,19 @@
+/*
+  Server is using node.js and mysql, running on port 3000
+  As connection it uses socket.io
+
+  Server keeps track on players online, players in queue and
+  all games being played.
+  Online players are indexed with their socket ids for easier use.
+
+  Server starts by using `node index.js` command.
+  There is sql dump with some accounts and data for testing purposes.
+  Testing accounts are: User1, User2
+  Login for these accounts are:
+  Login name: 1 Password: 1 for User1
+  Login name: 2 Password: 1 for User2
+*/
+
 var express = require('express');
 var mysql = require('mysql');
 var bcrypt = require('bcryptjs');
@@ -26,9 +42,13 @@ var online = 0;
 var OnlineUsers = []
 var Queue = [];
 var Games = [];
+var Achievements = loadAchievements();
+
+
 
 sc.on ('connection', function(socket) {
   //console.log("new connection");
+
   function disconnect_user (socketid) {
     online -= 1;
     var index = 0;
@@ -45,6 +65,13 @@ sc.on ('connection', function(socket) {
     //User is no longer online
     delete OnlineUsers[socketid];
   }
+  /*
+    Creates Gameroom with 2 players from the que. First player is always
+    the one who joined the que first. Second one is player with
+    closes MMR to the first player.
+
+    Every game has limit of 5 minutes.
+  */
   function CreateGame () {
     var Players = [];
     var GameName;
@@ -122,7 +149,7 @@ sc.on ('connection', function(socket) {
 				console.log("Error in the query");
 			}else{
 				if(rows.length == 0){
-               return false;
+          return false;
 				}else{
 					var User =  {
                   Name: rows[0].name
@@ -187,6 +214,48 @@ sc.on ('connection', function(socket) {
 				 });
 			 });
 		});
+  }
+  /*
+    Loads achievements for given player and sends the data
+    structure containing (Achievement_ID, Player's progress, Achievement's goal)
+  */
+  function loadUserAchieves(userID, socketID) {
+    var userAchievements = [];
+    var sql = "SELECT * FROM users WHERE ?? = ?";
+    var inserts = ['ID', userID];
+    sql = mysql.format(sql, inserts);
+
+    pool.query(sql,function(error, rows, fields){
+       if(!!error){
+          console.log("Error in the query");
+       } else if (rows.length != 0){
+         sql = "SELECT * FROM user_achieve WHERE ?? = ?"
+         inserts = ['user_id', userID];
+         sql = mysql.format(sql, inserts);
+
+         pool.query(sql,function(error, row, fields){
+           if(!!error){
+              console.log("Error in the query");
+           } else {
+             for (var i = 0; i < Achievements.length; i++) {
+               var achieve = {
+                 ID: row[i] == undefined ? Achievements[i].ID : row[i].achieve_ID,
+                 progress: row[i] == undefined ? 0 : row[i].progress,
+                 goal: row[i] == undefined ? Achievements[i].goal : Achievements[row[i].achieve_ID-1].goal
+               }
+
+               userAchievements.push(achieve);
+             }
+             userAchievements.sort(function (a, b) {return a.ID - b.ID});
+
+             var wrapper = {
+               _achievements: userAchievements
+             }
+             socket.emit('cinitAchieve', wrapper);
+           }
+         });
+       }
+    });
   }
   /* DISCONNECTING */
   socket.on ('try_disconnect', function () {
@@ -254,6 +323,7 @@ sc.on ('connection', function(socket) {
 			if(!!error){
 				console.log("Error in the query");
 			}else{
+        // User name doesnt exist
 				if(rows.length == 0){
 					sc.to(socket.id).emit('InvalidUser');
 				}else{
@@ -263,24 +333,25 @@ sc.on ('connection', function(socket) {
               sql = "SELECT * FROM players WHERE ?? = ?";
               inserts = ['ID', rows[0].ID];
           		sql = mysql.format(sql, inserts);
-
+              // Load user's game information
               pool.query(sql,function(error, row, fields){
           			if(!!error){
           				console.log("Error in the query");
           			}else{
-                  var Player = {
-                      mmr: row[0].mmr
-                  }
+                  // Add user to online users
                   online += 1;
                   OnlineUsers[socket.id] = {
                     ID:rows[0].ID,
                     InGame: -1,
                     Name: rows[0].name,
-                    mmr: Player.mmr
+                    mmr: row[0].mmr
                   };
                 }
              });
+             // Load achievements for user and send all other users message
+             // that new player logged in
 							sc.to(socket.id).emit('LoginSuccesful');
+              loadUserAchieves(rows[0].ID, socket.id);
               online_players(-1);
 						}else{
 							sc.to(socket.id).emit('InvalidPassword');
@@ -291,6 +362,17 @@ sc.on ('connection', function(socket) {
 		});
 	});
   /* GAME HANDLING FUNCTIONS */
+  socket.on ('leave_que', function() {
+    // Remove player from the que
+    if (OnlineUsers[socket.id] == undefined) return;
+    if (OnlineUsers[socket.id].InGame != -1) return;
+    for (var i = 0; i < Queue.length; i++) {
+      if (Queue[i].SocketID == socket.id)  {
+        Queue.splice(i, 1);
+        return;
+      }
+    }
+  });
   socket.on ('to_queue', function() {
     if (OnlineUsers[socket.id] == undefined) return;
     //Add user to queue
@@ -317,6 +399,16 @@ sc.on ('connection', function(socket) {
       wait --;
     }, 1000);
   });
+  /*
+    Handles the game over event.
+    First it sends all players in the game that game has ended
+    then it calculates MMRs of both players depending on `win` param
+    If any player disconnects during the game MMRs are not calculated,
+    but new win/lost game statistics are still written in database.
+
+    There are 2 catches on `GameOver` at the end of the match - one from each player
+    The server just handles the first that comes and ignores all after that.
+  */
   socket.on ('GameOver', function (win) {
     if (OnlineUsers[socket.id] == undefined) return;
 
@@ -448,6 +540,117 @@ sc.on ('connection', function(socket) {
     delete Games[GameName];
     console.log ("Game " + GameName + " ended");
   });
+  /* ACHIEVEMENTS */
+  socket.on('sAchieveComplete', function(userName, achieve_id) {
+    var sql = "SELECT * FROM users WHERE ?? = ?";
+		var inserts = ['name', userName];
+		sql = mysql.format(sql, inserts);
+
+		pool.query(sql,function(error, rows, fields){
+			if(!!error){
+				console.log("Error in the query");
+			} else if (rows.length != 0){
+
+        sql = "UPDATE user_achieve SET `progress` = ? WHERE `user_ID` = ? and `achieve_ID` = ?";
+        inserts = [Achievements[achieve_id - 1].goal, rows[0].ID, achieve_id];
+        sql = mysql.format(sql, inserts);
+        pool.query(sql,function(error, row, fields){
+          //console.log(row);
+           if(!!error){
+              console.log("Error in the query");
+           } else if (row.changedRows == 0) {
+             sql = "INSERT INTO user_achieve (user_ID, achieve_ID, progress) " +
+                  "VALUES (?, ?, ?)";
+             inserts = [rows[0].ID, achieve_id, Achievements[achieve_id - 1].goal];
+             //console.log (sql);
+             sql = mysql.format(sql, inserts);
+             pool.query(sql,function(error, rows, fields){
+                if(!!error){
+                   console.log("Error in the query1");
+                }
+             });
+           }
+        });
+
+      }
+    });
+  });
+  socket.on('sAchieveReset', function(userName, achieve_id) {
+    var sql = "SELECT * FROM users WHERE ?? = ?";
+    var inserts = ['name', userName];
+    sql = mysql.format(sql, inserts);
+
+    pool.query(sql,function(error, rows, fields){
+      if(!!error){
+        console.log("Error in the query");
+      } else if (rows.length != 0){
+
+        sql = "UPDATE user_achieve SET `progress` = ? WHERE `user_ID` = ? and `achieve_ID` = ?";
+        inserts = [0, rows[0].ID, achieve_id];
+        sql = mysql.format(sql, inserts);
+        pool.query(sql,function(error, row, fields){
+          //console.log(row, sql);
+           if(!!error){
+              console.log("Error in the query");
+           } else if (row.changedRows == 0) {
+             sql = "INSERT INTO user_achieve (user_ID, achieve_ID, progress) " +
+                  "VALUES (?, ?, ?)";
+             inserts = [rows[0].ID, achieve_id, 0];
+             sql = mysql.format(sql, inserts);
+             //console.log (sql);
+             pool.query(sql,function(error, rows, fields){
+                if(!!error){
+                   console.log("Error in the query1");
+                }
+             });
+           }
+        });
+
+      }
+    });
+  });
+  socket.on('sAchieveProgress', function(userName, achieve_id, progress) {
+    var sql = "SELECT * FROM users WHERE ?? = ?";
+    var inserts = ['name', userName];
+    sql = mysql.format(sql, inserts);
+
+    pool.query(sql,function(error, rows, fields){
+      if(!!error){
+        console.log("Error in the query");
+      } else if (rows.length != 0){
+
+        sql = "UPDATE user_achieve SET `progress` = ? WHERE `user_ID` = ? and `achieve_ID` = ?";
+        inserts = [progress, rows[0].ID, achieve_id];
+        sql = mysql.format(sql, inserts);
+        pool.query(sql,function(error, row, fields){
+          //console.log(row);
+           if(!!error){
+              console.log("Error in the query");
+           } else if (row.changedRows == 0) {
+             sql = "INSERT INTO user_achieve (user_ID, achieve_ID, progress) " +
+                  "VALUES (?, ?, ?)";
+             inserts = [rows[0].ID, achieve_id, progress];
+             sql = mysql.format(sql, inserts);
+             //console.log (sql);
+             pool.query(sql,function(error, rows, fields){
+                if(!!error){
+                   console.log("Error in the query1");
+                }
+             });
+           }
+        });
+
+      }
+    });
+  });
+  socket.on('sGetAchievement', function(id) {
+    var achieve = {
+      ID: Achievements[id].ID,
+      name: Achievements[id].name,
+      desc: Achievements[id].description
+    }
+    sc.to(socket.id).emit('cGetAchievement', achieve);
+  });
   /* GAME HELPING FUNCTIONS */
   socket.on ('online_players', function () {
     if (OnlineUsers[socket.id] != undefined) {
@@ -509,4 +712,48 @@ sc.on ('connection', function(socket) {
         sc.to(Game._Players[i].SocketID).emit('cFire', bullet);
       }
   });
+  socket.on ('sMyBonus', function(x, y, _i) {
+    if (OnlineUsers[socket.id] == undefined) return;
+    var Game = Games[OnlineUsers[socket.id].InGame];
+    if (Game == undefined) return;
+    for (var i = 0; i < Game._Players.length; i++)
+      if (Game._Players[i].SocketID != socket.id) {
+        sc.to(Game._Players[i].SocketID).emit('cMyBonus', x, y, _i);
+      }
+  });
+  socket.on ('cAddLive', function(value) {
+    if (OnlineUsers[socket.id] == undefined) return;
+    var Game = Games[OnlineUsers[socket.id].InGame];
+    if (Game == undefined) return;
+    for (var i = 0; i < Game._Players.length; i++)
+      if (Game._Players[i].SocketID != socket.id) {
+        sc.to(Game._Players[i].SocketID).emit('sAddLive', value);
+      }
+  });
+  socket.on ('sGetAchievements', function() {
+    if (OnlineUsers[socket.id] == undefined) return;
+    var a = {
+      _achievements: Achievements
+    }
+    sc.to(socket.id).emit('cGetAchievements', a);
+  });
 });
+
+// Load all achievements into memory right as server starts
+function loadAchievements () {
+  var ach = [];
+  var sql = "SELECT * FROM achievement";
+  var inserts = [];
+  sql = mysql.format(sql, inserts);
+
+  pool.query(sql,function(error, rows, fields){
+     if(!!error){
+        console.log("Error in the query");
+     } else {
+       for (var i = 0; i < rows.length; i++) {
+         ach.push (rows[i]);
+       }
+     }
+  });
+  return ach;
+}

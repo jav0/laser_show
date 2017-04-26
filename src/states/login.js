@@ -1,14 +1,14 @@
-
+// Login screen
 var Login = {
   preload: function() {
     game.load.spritesheet('button', 'images/Button-sprite.png', 314, 110);
   },
   create: function() {
     var mail, password;
-
+    // Warning display position
     texts[0] = game.add.text(game.world.centerX, game.world.height - 100, "", { font: "40px Courier", fill: "#c00", align: "center" });
     texts[0].anchor.set(0.5);
-
+    // Input fields
     mail = game.add.inputField(game.world.centerX - 400, game.world.centerY - 120  , {
       font: '15px Courier',
       fill: '#212121',

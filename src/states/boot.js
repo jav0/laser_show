@@ -1,6 +1,6 @@
 socket = io.connect ();
 
-var warning;
+// Players consist of name of all players currently in the same gameroom as me
 var MyName, Players;
 // Texts needed to be redrawn during one screen projection like warnings etc.
 // texts[0] is always reserved for warnings

@@ -1,8 +1,19 @@
+/*
+  Game
+*/
+/*
+  texts[1] - text at the end of the game
+  texts[2] - timer text
+
+*/
 // Enviroment
 var walls = [];
 const worldX  = 64;
 const worldY = 64;
+const worldH = 900;
+const worldW = 1800;
 const sectorW = 600;
+var zones = [];
 
 // Player
 var Player, Energy, Lives, cLives, cEnergy;
@@ -10,6 +21,10 @@ var EnergyBar, EnergyText;
 var frame, frame_offsetX, frame_offsetY;
 var bullets;
 var currentSpeed = 0, myX, myY;
+// 0,1 reserved for normal ones
+// 2 - +1 life
+// 3 - 100% energy
+var eBonus = [];
 
 // Enemy
 var Enemy, Enemy_lives, cELives;
@@ -20,12 +35,14 @@ var enX, enY;
 
 // Help variables
 var nextFire = 0;
+var nextBonus = 0;
 var fireRate = 700;
 var speed = 700;
 var adSpeed = 700;
 var strafe;
 var keyboard;
 var sBullet;
+var timer, _timer = 300;
 
 // Consts
 const MaxLives = 6;
@@ -42,37 +59,71 @@ var Game = {
     game.load.image('normal_ground', 'images/normal_ground.png');
     game.load.image('middle_ground', 'images/middle_ground.png');
     game.load.image('Frame', 'images/Frame.png');
-    game.load.image('wall', 'images/walls.png')
-    game.load.spritesheet('health_bar', 'images/Health_bar.png', 242, 98, 6);
-    game.load.spritesheet('Ehealth_bar', 'images/Health_barE.png', 242, 98, 6);
+    game.load.image('wall', 'images/walls.png');
+    game.load.spritesheet('health_bar', 'images/Health_bar.png', 242, 98, 7);
+    game.load.spritesheet('Ehealth_bar', 'images/Health_barE.png', 242, 98, 7);
     game.load.image('energy_bar', 'images/Energy_bar.png');
+    game.load.image('bonus', 'images/energy.png');
+    game.load.image('heartBonus', 'images/heart.png');
+    game.load.image('energyBonus', 'images/battery.png');
   },
   create: function(){
     //  Resize game world
     game.world.setBounds(worldX, worldY, worldW, worldH);
+    game.stage.backgroundColor = 0x000000;
     //canvasNode.width = window.innerWidth;
     //canvasNode.height = window.innerHeight;
 
     socket.emit('get_player');
+    /* Setting enviroment variables */
+    // 0 - normal ground on the left
+    // 1 - normal ground on the right
+    // 2 - middle ground
+
+    zones.push({
+      x: worldX,
+      y: worldY,
+      w: sectorW,
+      h: worldH});
+    zones.push({
+      x: worldX + worldW - sectorW,
+      y: worldY,
+      w: sectorW,
+      h: worldH});
+    zones.push({
+      x: worldX + sectorW,
+      y: worldY,
+      w: sectorW,
+      h: worldH});
     /*    --Setting textures--*/
     // Enviroment
-    game.add.tileSprite(worldX, worldY, sectorW, worldH, 'normal_ground');
-    game.add.tileSprite(worldX + worldW - sectorW, worldY, sectorW, worldH, 'normal_ground');
-    game.add.tileSprite(worldX + sectorW, worldY, sectorW, worldH, 'middle_ground');
+    game.add.tileSprite(zones[0].x, zones[0].y, zones[0].w, zones[0].h, 'normal_ground');
+    game.add.tileSprite(zones[1].x, zones[1].y, zones[1].w, zones[1].h, 'normal_ground');
+    game.add.tileSprite(zones[2].x, zones[2].y, zones[2].w, zones[2].h,  'middle_ground');
+
     var wall_size = 64;
     walls[0] = game.add.tileSprite(worldX + 300, game.world.centerY - 200, wall_size, 400, 'wall');
     walls[1] = game.add.tileSprite(worldW - 300, game.world.centerY - 200, wall_size, 400, 'wall');
-    walls[2] = game.add.tileSprite(worldX - wall_size, worldY - wall_size, worldW, wall_size, 'wall'); //up
-    walls[3] = game.add.tileSprite(worldX - wall_size, worldY, wall_size, worldH - wall_size, 'wall'); //left
-    walls[4] = game.add.tileSprite(worldW + wall_size, worldY, wall_size, worldH + wall_size, 'wall'); //right
-    walls[5] = game.add.tileSprite(worldX, worldH + wall_size, worldW, wall_size, 'wall'); //bottom
+    //walls[2] = game.add.tileSprite(worldW + wall_size, worldY + 1, wall_size, worldH + wall_size, 'wall'); //right
+    //walls[3] = game.add.tileSprite(worldX, worldH + wall_size + 1, worldW, wall_size, 'wall'); //bottom
+
+    // Init all bonuses and generate only normal one on my side.
+    // If im room owner (im playing on the left) then generate special bonuses every x sec
+    var generatexy;
+    if (myX < sectorW)  generatexy = 0;
+    else generatexy = 1;
+    eBonus.push(new normalBonus(zones[0], generatexy ? 0 : 1));
+    eBonus.push(new normalBonus(zones[1], generatexy));
+    socket.emit('sMyBonus', eBonus[generatexy].object.x, eBonus[generatexy].object.x, generatexy);
+    eBonus.push(new heartBonus(zones[2], 0));
+    eBonus.push(new batteryBonus(zones[2], 0));
+    //console.log (eBonus1.object.sector);
 
     // Players
     Player = game.add.sprite(myX, myY, 'player');
     Player.anchor.setTo(0.5);
     Player.x = myX;
     Player.y = myY;
-    Player.angle = -90;
 
     for (p in Players) {
       if (Players[p] != MyName) {
@@ -80,7 +131,6 @@ var Game = {
         Enemy = game.add.sprite(enX, enY, 'enemy');
         Enemy.anchor.setTo(0.5);
         Enemy.x = enX; Enemy.y = enY;
-        Enemy.angle = -90;
 
       }
     }
@@ -103,16 +153,36 @@ var Game = {
     Enemy_lives = game.add.sprite(21 + Eframe_offsetX,25 + Eframe_offsetY, 'Ehealth_bar');
     Enemy_lives.fixedToCamera = true;
 
-    var Ename = game.add.text (169 + Eframe_offsetX, 130 + Eframe_offsetY, Enemyname, { font: "15px Courier", fill: "#000 ", align: "center" });
-    Ename.fixedToCamera = true;
-    texts[0] = game.add.text(game.world.centerX, game.world.height - 100, "", { font: "40px Courier", fill: "#c00", align: "center" });
-    texts[0].anchor.set(0.5);
+    if (Enemy != undefined) {
+      var Ename = game.add.text (169 + Eframe_offsetX, 130 + Eframe_offsetY, Enemyname, { font: "15px Courier", fill: "#000 ", align: "center" });
+      Ename.fixedToCamera = true;
+    }
+    // End game text
+    texts[1] = game.add.text(game.world.centerX, game.world.height - 100, "", { font: "40px Courier", fill: "#c00", align: "center" });
+    texts[1].anchor.set(0.5);
+    // Timer
+    texts[2] = game.add.text(game.world.centerX - 50, window.innerHeight , "", { font: "40px Courier", fill: "#fff", align: "center" });
+    //texts[2].anchor.set(0.5);
+    _timer = 300;
+    timer = setInterval(function() {
+      texts[2].setText(formatTime(_timer));
+      _timer -- ;
+      // Generate special bonus every 30 seconds
+      if (_timer%30 == 0 && myX < sectorW) {
+        // 20% for heart bonus, 80% for battery
+        var random = game.rnd.integerInRange(2, 6);
+        if (random < 5) random = 2; else random = 3;
+        eBonus[random].object.x = game.rnd.integerInRange(eBonus[random].object.sector.x, eBonus[random].object.sector.x + eBonus[random].object.sector.w-64);
+        eBonus[random].object.y = game.rnd.integerInRange(eBonus[random].object.sector.y, eBonus[random].object.sector.y + eBonus[random].object.sector.h-64);
+        socket.emit('sMyBonus', eBonus[random].object.x, eBonus[random].object.y, random);
+      }
+    }, 1000);
 
     // Bullets
     enemyBullets = game.add.group();
     enemyBullets.enableBody = true;
     enemyBullets.physicsBodyType = Phaser.Physics.ARCADE;
-    enemyBullets.createMultiple(1000, 'enemy_bullet', 0, false);
+    enemyBullets.createMultiple(50, 'enemy_bullet', 0, false);
     enemyBullets.setAll('anchor.x', 0.5);
     enemyBullets.setAll('anchor.y', 0.5);
     enemyBullets.setAll('outOfBoundsKill', true);
@@ -121,14 +191,18 @@ var Game = {
     bullets = game.add.group();
     bullets.enableBody = true;
     bullets.physicsBodyType = Phaser.Physics.ARCADE;
-    bullets.createMultiple(1000, 'bullet', 0, false);
+    bullets.createMultiple(50, 'bullet', 0, false);
     bullets.setAll('anchor.x', 0.5);
     bullets.setAll('anchor.y', 0.5);
     bullets.setAll('outOfBoundsKill', true);
     bullets.setAll('checkWorldBounds', true);
     // Setting Physics
     game.physics.enable(Player, Phaser.Physics.ARCADE);
-    game.physics.enable(Enemy, Phaser.Physics.ARCADE);
+    Player.body.setCircle(64);
+    if (Enemy != undefined) {
+      game.physics.enable(Enemy, Phaser.Physics.ARCADE);
+      Enemy.body.setCircle(64);
+    }
     Player.body.drag.set(0.2);
     Player.body.maxVelocity.setTo(MaxSpeed, MaxSpeed);
     Player.body.collideWorldBounds = true;
@@ -140,22 +214,15 @@ var Game = {
     // Camera
     game.camera.follow(Player);
     game.camera.focusOnXY(Player.x, Player.y);
-    console.log(game.scale.width + " | " + game.scale.height);
-    //game.scale.setGameSize(window.innerWidth, window.innerHeight);
-    //game.scale.setGameSize(worldW, worldH);
-    //game.camera.setSize(1000, 900);
-    //game.scale.scaleMode = Phaser.ScaleManager.SHOW_ALL;
-    //game.scale.minWidth = 640;
-    //game.scale.minHeigth = 360;
-    //game.scale.maxWidth = 1920;
-    //game.scale.maxHeight = 1080;
-    console.log(game.scale.width + " | " + game.scale.height);
     // Keyboard input
     keyboard = game.input.keyboard.addKeys( { 'up': Phaser.KeyCode.W, 'down': Phaser.KeyCode.S, 'left': Phaser.KeyCode.A, 'right': Phaser.KeyCode.D } );;
   },
 
   update: function(){
-    game.physics.arcade.collide(walls, Player);
+    //game.physics.arcade.collide(walls, Player);
+    game.physics.arcade.overlap(walls, Player, playerInWall, null, this);
+    for (var i = 0; i < eBonus.length; i++)
+      game.physics.arcade.overlap(eBonus[i].object, Player, function(bonus, player){playerInBonus(bonus, player, i)}, null, this);
     game.physics.arcade.overlap(bullets, walls, bulletHitWall, null, this);
     game.physics.arcade.overlap(enemyBullets, walls, bulletHitWall, null, this);
     game.physics.arcade.overlap(enemyBullets, Player, bulletHitPlayer, null, this);
@@ -256,7 +323,12 @@ var Game = {
     }
   }
 }
-function bulletHitWall (player, bullet) {
+// Collision event functions
+function playerInWall (player, wall) {
+  if (cEnergy > 0)
+    cEnergy -= 1;
+}
+function bulletHitWall (wall, bullet) {
 
   bullet.kill();
 }
@@ -281,7 +353,7 @@ function fire () {
 
   if (game.time.now > nextFire && bullets.countDead() > 0 && cEnergy >= 25){
 
-    //cEnergy -= 25;
+    cEnergy -= 25;
 
     nextFire = game.time.now + fireRate;
 
@@ -301,20 +373,43 @@ function fire () {
     socket.emit('sFire', sBullet);
   }
 }
+// Function handling end of the game
 function endText(win) {
   var wait = 2;
-  if (win == 1) texts[0].setText("You won");
-  if (!win) texts[0].setText("You lost");
-  if (win == 2) texts[0].setText("Draw");
+  if (win == 1) {
+    texts[1].setText("You won");
+    // Check for achievevements
+    achieveTrack(0, 1);
+    achieveTrack(1, 1);
+    achieveTrack(3, 300-_timer);
+    achieveTrack(4, cLives);
+
+  }
+  if (!win) texts[1].setText("You lost");
+  if (win == 2) texts[1].setText("Draw");
   var waiting = setInterval(function() {
     if (wait == 0) {
       game.world.setBounds(0, 0, window.innerWidth, window.innerHeight);
       delete Players;
+
+      // Check for achievements
+      achieveTrack(2, win);
+      // Clear all timers and return to lobby
+      clearInterval(waiting);
+      clearInterval(timer);
       game.state.start('lobby');
     }
     wait--;
   }, 1000);
 }
+socket.on ('sAddLive', function (value) {
+  cELives += value;
+  if (cElives > 6) cElives = 6;
+});
+socket.on('cMyBonus', function (x, y, i) {
+  eBonus[i].object.x = x;
+  eBonus[i].object.y = y;
+});
 socket.on('cFire', function(_bullet) {
 
   var bullet = enemyBullets.getFirstExists(false);
@@ -334,19 +429,21 @@ socket.on ('cHitPlayer', function() {
     socket.emit('GameOver', 0);
   }
 });
+// Game ended with timeout, calculate if i won
 socket.on ('Timeout', function() {
-  if (cELives > Lives) {
+  if (cELives > cLives) {
     socket.emit('GameOver', 0);
-  } else if (cELives < Lives) {
+  } else if (cELives < cLives) {
     socket.emit('GameOver', 1);
   } else {
     socket.emit('GameOver', 2);
   }
 });
+// Game ended, handle the event
 socket.on('GameEnd',function(win) {
   endText(win);
 });
-
+// Game started, set my position and all other variables
 socket.on('GameStart',function(players, enemy) {
   var _enX, _enY, _myX, _myY;
   _myX = worldX + 200;
@@ -371,14 +468,13 @@ socket.on('GameStart',function(players, enemy) {
   }
   cLives = 3;
   cELives = 3;
-  cEnergy = MaxEnergy;
+  cEnergy = 0;
 });
 
 socket.on('cPlayerAngle',function(angle) {
   if (Enemy != undefined)
     Enemy.rotation = angle;
 });
-
 
 socket.on('cPlayerPosition',function(x, y) {
   if (Enemy != undefined) {
